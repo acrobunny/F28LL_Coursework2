@@ -1,5 +1,6 @@
 add_executable(queue_tests
     TestLockedQueue.cpp
+	TestLockFreeQueue.cpp
 )
 
 target_link_libraries(queue_tests PRIVATE
