@@ -51,27 +51,27 @@ TEST_CASE_METHOD(LockFreeFixture, "LockFreeQueue - empty reflects state correctl
 
 TEST_CASE_METHOD(LockFreeFixture, "LockFreeQueue - multiple producers single consumer", "[lockfree][concurrency]")
 {
-    constexpr int numProducers     = 4;
+    constexpr int numProducers = 4;
     constexpr int itemsPerProducer = 1000;
 
     std::vector<std::thread> producers;
     for (int i = 0; i < numProducers; ++i)
     {
         producers.emplace_back([this, i, itemsPerProducer]()
-        {
-            for (int j = 0; j < itemsPerProducer; ++j)
-                queue.push(i * itemsPerProducer + j);
-        });
+            {
+                for (int j = 0; j < itemsPerProducer; ++j)
+                    queue.push(i * itemsPerProducer + j);
+            });
     }
 
-    std::thread consumer([this, numProducers, itemsPerProducer]()
-    {
-        while (consumed < numProducers * itemsPerProducer)
+    std::thread consumer([this, itemsPerProducer, numProducers]()
         {
-            if (auto val = queue.tryPop(); val.has_value())
-                ++consumed;
-        }
-    });
+            while (consumed < numProducers * itemsPerProducer)
+            {
+                if (auto val = queue.tryPop(); val.has_value())
+                    ++consumed;
+            }
+        });
 
     for (auto& p : producers) p.join();
     consumer.join();
@@ -81,28 +81,28 @@ TEST_CASE_METHOD(LockFreeFixture, "LockFreeQueue - multiple producers single con
 
 TEST_CASE_METHOD(LockFreeFixture, "LockFreeQueue - single producer multiple consumers", "[lockfree][concurrency]")
 {
-    constexpr int numConsumers    = 4;
+    constexpr int numConsumers = 4;
     constexpr int itemsPerConsumer = 1000;
 
-    std::thread producer([this, numConsumers, itemsPerConsumer]()
-    {
-        for (int i = 0; i < numConsumers * itemsPerConsumer; ++i)
-            queue.push(i);
-    });
+    std::thread producer([this, itemsPerConsumer, numConsumers]()
+        {
+            for (int i = 0; i < numConsumers * itemsPerConsumer; ++i)
+                queue.push(i);
+        });
 
     std::vector<std::thread> consumers;
     for (int i = 0; i < numConsumers; ++i)
     {
         consumers.emplace_back([this, itemsPerConsumer]()
-        {
-            int localCount = 0;
-            while (localCount < itemsPerConsumer)
             {
-                if (auto val = queue.tryPop(); val.has_value())
-                    ++localCount;
-            }
-            consumed += localCount;
-        });
+                int localCount = 0;
+                while (localCount < itemsPerConsumer)
+                {
+                    if (auto val = queue.tryPop(); val.has_value())
+                        ++localCount;
+                }
+                consumed += localCount;
+            });
     }
 
     producer.join();
@@ -122,7 +122,7 @@ TEST_CASE_METHOD(LockFreeFixture, "LockFreeQueue - multiple producers multiple c
     std::vector<std::thread> producers;
     for (int i = 0; i < numProducers; ++i)
     {
-        producers.emplace_back([this, i, itemsPerProducer]()
+        producers.emplace_back([this, i, itemsPerConsumer, itemsPerProducer]()
             {
                 for (int j = 0; j < itemsPerProducer; ++j)
                     queue.push(i * itemsPerProducer + j);
@@ -137,7 +137,8 @@ TEST_CASE_METHOD(LockFreeFixture, "LockFreeQueue - multiple producers multiple c
                 int localCount = 0;
                 while (localCount < itemsPerConsumer)
                 {
-                    if (auto val = queue.tryPop()) ++localCount;
+                    if (auto val = queue.tryPop(); val.has_value())
+                        ++localCount;
                 }
                 consumed += localCount;
             });
@@ -150,83 +151,45 @@ TEST_CASE_METHOD(LockFreeFixture, "LockFreeQueue - multiple producers multiple c
 }
 
 // ============================================================
-// Throughput benchmarks (comparable to LockedQueue benchmarks)
+// Throughput benchmarks
 // ============================================================
 
-TEST_CASE_METHOD(LockFreeFixture, "LockFreeQueue - throughput benchmarks", "[lockfree][benchmark]")
+namespace
 {
-    BENCHMARK("single-threaded push+pop 1000 items")
+    /**
+     * @brief Runs a symmetric producer/consumer benchmark on a LockFreeQueue.
+     *
+     * Launches numThreads producers and numThreads consumers, each operating
+     * on itemsPerProducer items. All threads are held on a start flag and
+     * released simultaneously to maximise contention.
+     *
+     * @param queue          The queue under test.
+     * @param numThreads     Number of producer threads (== number of consumer threads).
+     * @param itemsPerThread Number of items each producer pushes.
+     * @return Total number of items consumed.
+     */
+    int runThroughputBenchmark(LockFreeQueue<int>& queue, int numThreads, int itemsPerThread)
     {
-        for (int i = 0; i < 1000; ++i)
-            queue.push(i);
-
-        int lastValue = -1;
-        for (int i = 0; i < 1000; ++i)
-            if (auto val = queue.tryPop()) lastValue = *val;
-        return lastValue;
-    };
-
-    BENCHMARK("2 producers 2 consumers throughput")
-    {
-        constexpr int itemsPerProducer = 1000;
-        std::atomic<int> localConsumed{ 0 };
+        const int total = numThreads * itemsPerThread;
+        std::atomic<int>  localConsumed{ 0 };
         std::atomic<bool> start{ false };
 
         std::vector<std::thread> producers;
-        for (int i = 0; i < 2; ++i)
+        for (int i = 0; i < numThreads; ++i)
         {
-            producers.emplace_back([this, i, itemsPerProducer, &start]()
-            {
-                while (!start) {}
-                for (int j = 0; j < itemsPerProducer; ++j)
-                    queue.push(i * itemsPerProducer + j);
-            });
-        }
-
-        std::vector<std::thread> consumers;
-        for (int i = 0; i < 2; ++i)
-        {
-            consumers.emplace_back([this, &localConsumed, &start, itemsPerProducer]()
-            {
-                while (!start) {}
-                while (localConsumed < 2 * itemsPerProducer)
-                {
-                    if (auto val = queue.tryPop()) ++localConsumed;
-                }
-            });
-        }
-
-        start = true;
-        for (auto& p : producers) p.join();
-        for (auto& c : consumers) c.join();
-
-        return localConsumed.load();
-    };
-
-    BENCHMARK("4 producers 4 consumers throughput")
-    {
-        constexpr int numProducers = 4;
-        constexpr int numConsumers = 4;
-        constexpr int itemsPerProducer = 1000;
-        constexpr int itemsPerConsumer = (numProducers * itemsPerProducer) / numConsumers;
-        std::atomic<int> localConsumed{ 0 };
-        std::atomic<bool> start{ false };
-
-        std::vector<std::thread> producers;
-        for (int i = 0; i < numProducers; ++i)
-        {
-            producers.emplace_back([this, i, itemsPerProducer, &start]()
+            producers.emplace_back([&queue, &start, i, itemsPerThread]()
                 {
                     while (!start) {}
-                    for (int j = 0; j < itemsPerProducer; ++j)
-                        queue.push(i * itemsPerProducer + j);
+                    for (int j = 0; j < itemsPerThread; ++j)
+                        queue.push(i * itemsPerThread + j);
                 });
         }
 
+        const int itemsPerConsumer = total / numThreads;
         std::vector<std::thread> consumers;
-        for (int i = 0; i < numConsumers; ++i)
+        for (int i = 0; i < numThreads; ++i)
         {
-            consumers.emplace_back([this, &localConsumed, &start, itemsPerConsumer]()
+            consumers.emplace_back([&queue, &localConsumed, &start, itemsPerConsumer]()
                 {
                     while (!start) {}
                     int localCount = 0;
@@ -243,5 +206,39 @@ TEST_CASE_METHOD(LockFreeFixture, "LockFreeQueue - throughput benchmarks", "[loc
         for (auto& c : consumers) c.join();
 
         return localConsumed.load();
+    }
+}
+
+TEST_CASE_METHOD(LockFreeFixture, "LockFreeQueue - throughput benchmarks", "[lockfree][benchmark]")
+{
+    BENCHMARK("single-threaded push+pop 1000 items")
+    {
+        for (int i = 0; i < 1000; ++i)
+            queue.push(i);
+
+        int lastValue = -1;
+        for (int i = 0; i < 1000; ++i)
+            if (auto val = queue.tryPop()) lastValue = *val;
+        return lastValue;
+    };
+
+    BENCHMARK("2 producers 2 consumers throughput")
+    {
+        return runThroughputBenchmark(queue, 2, 1000);
+    };
+
+    BENCHMARK("4 producers 4 consumers throughput")
+    {
+        return runThroughputBenchmark(queue, 4, 1000);
+    };
+
+    BENCHMARK("8 producers 8 consumers throughput")
+    {
+        return runThroughputBenchmark(queue, 8, 1000);
+    };
+
+    BENCHMARK("16 producers 16 consumers throughput")
+    {
+        return runThroughputBenchmark(queue, 16, 1000);
     };
 }
