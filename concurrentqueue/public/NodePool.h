@@ -27,8 +27,6 @@
   *
   * Also owns the TaggedPtr type used by LockFreeQueue for ABA protection
   * on head and tail, keeping all pointer tagging logic in one place.
-  *
-  * @tparam T The data type stored in each pooled node.
   */
 template <typename T>
 class NodePool
@@ -63,15 +61,10 @@ public:
     /// Amount by which the tag increments on each successful CAS.
     static constexpr uintptr_t TAG_INCREMENT = 1;
 
-    // ----------------------------------------------------------------
-    // Forward declare PoolNode so TaggedPtr can reference it
-    // ----------------------------------------------------------------
+    /**
+    * @brief Forward declaration of PoolNode to avoid circular dependency with TaggedPtr.
+    */
     struct PoolNode;
-
-    // ----------------------------------------------------------------
-    // TaggedPtr — owned here so both NodePool and LockFreeQueue share
-    // the same type without circular dependencies.
-    // ----------------------------------------------------------------
 
     /**
      * @brief A pointer + version tag packed into a single uintptr_t.
@@ -79,6 +72,8 @@ public:
      * Fits in one 64-bit word so std::atomic<TaggedPtr> is lock-free
      * on all mainstream 64-bit platforms without needing 128-bit CAS.
      * The tag increments on every successful CAS to prevent ABA races.
+     * 
+     * TaggedPtr is owned by NodePool to avoid duplication of pointer tagging logic.
      */
     struct TaggedPtr
     {
@@ -109,7 +104,18 @@ public:
             return (value >> TAG_SHIFT) & MAX_TAG;
         }
 
+        /**
+         * @brief Compares two TaggedPtr instances for equality.
+         * @param other The other TaggedPtr to compare with.
+         * @return True if both the pointer and tag are equal, false otherwise.
+         */
         bool operator==(const TaggedPtr& other) const { return value == other.value; }
+
+        /**
+         * @brief Compares two TaggedPtr instances for inequality.
+         * @param other The other TaggedPtr to compare with.
+         * @return True if either the pointer or tag differ, false otherwise.
+         */
         bool operator!=(const TaggedPtr& other) const { return value != other.value; }
     };
 
@@ -126,17 +132,32 @@ public:
      */
     struct PoolNode
     {
-        /// User data stored in this node.
+        /**
+        * @brief The user data stored in this node.
+        */
         T data;
 
-        /// Next pointer — used by both the free list and the queue itself.
-        /// TaggedPtr here prevents ABA on the queue's head/tail CAS operations.
+
+        /**
+        * @brief Next pointer — used by both the free list and the queue itself.
+        * TaggedPtr here prevents ABA on the queue's head/tail CAS operations.
+        */
         std::atomic<TaggedPtr> next;
 
-        /// True if this node was allocated via operator new (fallback path).
+        /**
+        * @brief True if this node was allocated via operator new (fallback path).
+        */
         bool fromHeap{ false };
 
+        /**
+        * @brief Default constructor — initializes the next pointer to an empty TaggedPtr.
+        */
         PoolNode() : next(TaggedPtr{}) {}
+
+        /**
+        * @brief Constructs a PoolNode with a given value.
+        * @param value The value to store in the node.
+        */
         explicit PoolNode(T value) : data(std::move(value)), next(TaggedPtr{}) {}
     };
 

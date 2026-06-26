@@ -29,8 +29,6 @@
   *
   * TaggedPtr is sourced from NodePool to avoid duplication — all pointer
   * tagging logic lives in one place.
-  *
-  * @tparam T The element type stored in the queue.
   */
 template <typename T>
 class LockFreeQueue
@@ -41,16 +39,24 @@ private:
     using PoolNode = typename Pool::PoolNode;
     using TaggedPtr = typename Pool::TaggedPtr;
 
-    /// CPU cache line size — head and tail are padded onto separate lines
-    /// to prevent false sharing between producers and consumers.
+    /**
+     * @brief CPU cache line size — head and tail are padded onto separate lines  
+     *        to prevent false sharing between producers and consumers.
+     */
     static constexpr std::size_t CACHE_LINE_SIZE = Pool::CACHE_LINE_SIZE;
 
-    /// Owned node pool — declared before head/tail so it is constructed
-    /// first and destroyed last.
+    /**
+     * @brief Owned node pool — declared before head / tail so it is constructed
+     *        first and destroyed last.
+     */
     Pool pool;
 
-    alignas(CACHE_LINE_SIZE) std::atomic<TaggedPtr> head; ///< Points to the dummy sentinel node.
-    alignas(CACHE_LINE_SIZE) std::atomic<TaggedPtr> tail; ///< Points to (approximately) the last node.
+    /**
+     * @brief Head and tail pointers — padded to separate cache lines to avoid
+     *        false sharing between producers and consumers.
+     */
+    alignas(CACHE_LINE_SIZE) std::atomic<TaggedPtr> head;
+    alignas(CACHE_LINE_SIZE) std::atomic<TaggedPtr> tail;
 
 public:
 
